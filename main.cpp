@@ -71,10 +71,24 @@ void ff_color(VertexList::const_iterator begin, VertexList::const_iterator end,
   }
 }
 
+std::size_t num_superstep(std::uint32_t* all_nc_sizes, int num_procs,
+                          std::uint32_t superstep_s) {
+  std::size_t max_num = 0;
+  for (int i = 0; i < num_procs; ++i) {
+    std::size_t cs = all_nc_sizes[i] / superstep_s;
+    if (all_nc_sizes[i] % superstep_s != 0)
+      cs++;
+
+    max_num = std::max(max_num, cs);
+  }
+
+  return max_num;
+}
+
 std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
                              const VertexList& internal,
                              const VertexList& boundary,
-                             std::size_t superstep_s, int rank,
+                             std::uint32_t superstep_s, int rank,
                              int num_procs) {
   ColorMap color;
   // First color internal vertices
@@ -98,33 +112,45 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
   }
 
   VertexList not_colored = boundary;
+  std::uint32_t nc = not_colored.size();
+  auto nc_sizes = new std::uint32_t[num_procs];
+  MPI_Allgather(&nc, 1, MPI_UINT32_T, nc_sizes, 1, MPI_UINT32_T,
+                MPI_COMM_WORLD);
+  std::uint32_t ns = num_superstep(nc_sizes, num_procs, superstep_s);
   auto vc_send_msg = new VertexColorMessage[superstep_s];
-  auto vc_recv_msg = new VertexColorMessage[num_procs * superstep_s];
-  while (!not_colored.empty()) {
-    std::size_t nc = not_colored.size();
+  auto vc_recv_msg = new VertexColorMessage*[ns];
+  for (int s = 0; s < ns; ++s)
+    vc_recv_msg[s] = new VertexColorMessage[num_procs * superstep_s];
+
+  auto reqs = new MPI_Request[ns];
+  auto stats = new MPI_Status[ns];
+  while (ns) {
     std::cerr << "Proc " << rank <<
         ": num of boundary vertices to be colored: " << nc << "\n";
     auto beg_it = std::begin(not_colored);
-    for (std::size_t beg = 0, end = std::min(nc, superstep_s);
-         beg < nc; beg += superstep_s, end = std::min(nc, beg + superstep_s)) {
+    for (int s = 0; s < ns; ++s) {
       memset(vc_send_msg, -1, sizeof(*vc_send_msg) * superstep_s);
-      ff_color(beg_it + beg, beg_it + end, graph, color, max_color,
-               /*msg=*/vc_send_msg);
-      // MPI_Request send_req;
-      // MPI_Ibcast(vc_send_msg, superstep_s * 2, MPI_INT, rank, MPI_COMM_WORLD,
-      //            &send_req);
-      // MPI_Request* recv_req = new MPI_Request[num_procs];
-      // for (int i = 0; i < num_procs; ++i)
-      //   MPI_Ibcast(vc_recv_msg[i], superstep_s * 2, MPI_INT, i, MPI_COMM_WORLD,
-      //              recv_req + i);
-      MPI_Allgather(vc_send_msg, 2 * superstep_s, MPI_INT, vc_recv_msg,
-                    2 * superstep_s, MPI_INT, MPI_COMM_WORLD);
+      std::uint32_t beg = s * superstep_s;
+      std::uint32_t end = std::min(beg + superstep_s, nc);
+      // std::cerr << "Proc " << rank << ": " << s << "\n";
+      // std::cerr << "Proc " << rank << ":" << beg << ", " << end << "\n";
+      if (beg < nc)
+        ff_color(beg_it + beg, beg_it + end, graph, color, max_color,
+                 /*msg=*/vc_send_msg);
+
+      MPI_Iallgather(vc_send_msg, 2 * superstep_s, MPI_INT, vc_recv_msg[s],
+                     2 * superstep_s, MPI_INT, MPI_COMM_WORLD, reqs + s);
+    }
+
+    MPI_Waitall(ns, reqs, stats);
+    for (int s = 0; s < ns; ++s) {
       for (int p = 0; p < num_procs; ++p) {
+        // No need to process ranks colors
         if (p == rank)
           continue;
 
         for (int i = 0; i < superstep_s; ++i) {
-          VertexColorMessage rm = vc_recv_msg[p * superstep_s + i];
+          VertexColorMessage rm = vc_recv_msg[s][p * superstep_s + i];
           if (rm.vertex == -1)
             break;
 
@@ -143,10 +169,20 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
           not_colored.push_back(u);
       }
     }
+
+    nc = not_colored.size();
+    MPI_Allgather(&nc, 1, MPI_INT, nc_sizes, 1, MPI_INT, MPI_COMM_WORLD);
+    ns = num_superstep(nc_sizes, num_procs, superstep_s);
   }
 
+  delete[] nc_sizes;
   delete[] vc_send_msg;
+  for (int s = 0; s < ns; ++s)
+    delete[] vc_recv_msg[s];
+
   delete[] vc_recv_msg;
+  delete[] reqs;
+  delete[] stats;
   return max_color;
 }
 
