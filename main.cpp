@@ -22,6 +22,8 @@ struct CSRGraph {
   idx_t *adjacent_offset;
   idx_t *adjacent;
 
+  CSRGraph() : num_vertices(0), num_edges(0) {}
+
   // Return the start of the adjacency list of 'u'
   idx_t const *adj(idx_t u) const { return adjacent + adjacent_offset[u]; }
 
@@ -99,6 +101,8 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
   // Initialize random numbers for each boundary vertex not limited to
   // this partition
   RandomMap random;
+  auto nc_sizes = new std::uint32_t[num_procs];
+  nc_sizes[rank] = boundary.size();
   for (auto u: boundary) {
     std::srand(u);
     random[u] = std::rand();
@@ -114,7 +118,6 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
 
   VertexList not_colored = boundary;
   std::uint32_t nc = not_colored.size();
-  auto nc_sizes = new std::uint32_t[num_procs];
   MPI_Allgather(&nc, 1, MPI_UINT32_T, nc_sizes, 1, MPI_UINT32_T,
                 MPI_COMM_WORLD);
   std::uint32_t ns = num_superstep(nc_sizes, num_procs, superstep_s);
@@ -133,8 +136,6 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
       memset(vc_send_msg, -1, sizeof(*vc_send_msg) * superstep_s);
       std::uint32_t beg = s * superstep_s;
       std::uint32_t end = std::min(beg + superstep_s, nc);
-      // std::cerr << "Proc " << rank << ": " << s << "\n";
-      // std::cerr << "Proc " << rank << ":" << beg << ", " << end << "\n";
       if (beg < nc)
         ff_color(beg_it + beg, beg_it + end, graph, color, max_color,
                  /*msg=*/vc_send_msg);
@@ -166,8 +167,10 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
       idx_t const * u_adj = graph.adj(u);
       for (int i = 0; i < graph.degree(u); ++i) {
         std::uint32_t v = u_adj[i];
-        if (color[u] == color.at(v) && random.at(v) > random[u])
+        if (color[u] == color.at(v) && random.at(v) > random[u]) {
           not_colored.push_back(u);
+          break;
+        }
       }
     }
 
@@ -248,22 +251,23 @@ int read_csr(std::string graph_path, CSRGraph& out_graph) {
     if (tokens[0] == "a") {
       std::uint32_t u = std::stoul(tokens[1]) - 1;
       std::uint32_t v = std::stoul(tokens[2]) - 1;
-      auto ins_res = graph[u].insert(v);
-      if (ins_res.second)
+      bool inserted;
+      std::tie(std::ignore, inserted) = graph[u].insert(v);
+      if (inserted)
         ++out_graph.num_edges;
 
-      ins_res = graph[v].insert(u);
-      if (ins_res.second)
+      std::tie(std::ignore, inserted) = graph[v].insert(u);
+      if (inserted)
         ++out_graph.num_edges;
     } else if (tokens[0] == "p" && tokens[1] == "sp") {
       out_graph.num_vertices = std::stoul(tokens[2]);
       graph.resize(out_graph.num_vertices);
-      std::cerr << "Num of vertices: " << out_graph.num_vertices << "\n";
+      std::cerr << "Num of vertices: " << out_graph.num_vertices<< "\n";
       out_graph.adjacent_offset = new idx_t[out_graph.num_vertices + 1];
     }
   }
 
-  std::cerr << "Num of edges: " << out_graph.num_edges << "\n";
+  std::cerr << "Num of edges: " << out_graph.num_edges / 2 << "\n";
   out_graph.adjacent = new idx_t[out_graph.num_edges];
   out_graph.adjacent_offset[0] = 0;
   for (int u = 0; u < out_graph.num_vertices; ++u) {
@@ -319,17 +323,14 @@ int main(int argc, char* argv[]) {
   VertexList internal;
   VertexList boundary;
   std::tie(internal, boundary) = partition_vertices(graph, partitioning, rank);
-  std::cerr << "Proc " << rank << ": internal vertices size: " <<
-      internal.size() << "\n";
-  std::cerr << "Proc " << rank <<
-      ": boundary vertices size: " << boundary.size() << "\n";
   std::uint32_t superstep_size = 100;
   if (argc == 3)
     superstep_size = std::stoul(argv[2]);
 
   double start = MPI_Wtime();
   std::uint32_t colors = spcr_framework(graph, partitioning, internal,
-                                        boundary, superstep_size, rank, num_procs);
+                                        boundary, superstep_size, rank,
+                                        num_procs);
   std::cerr << "Proc " << rank << ": SPCRFramework took " <<
       (MPI_Wtime() - start) * 1000.0 << "ms\n";
   delete[] partitioning;
