@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -7,7 +8,7 @@
 #include <vector>
 #include <unordered_set>
 #include <unordered_map>
-#include <utility>
+#include <algorithm>
 #include <mpi.h>
 #include <metis.h>
 
