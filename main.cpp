@@ -258,7 +258,7 @@ int read_csr(std::string graph_path, CSRGraph& out_graph) {
         ++out_graph.num_edges;
     } else if (tokens[0] == "p" && tokens[1] == "sp") {
       out_graph.num_vertices = std::stoul(tokens[2]);
-      graph.reserve(out_graph.num_vertices);
+      graph.resize(out_graph.num_vertices);
       std::cerr << "Num of vertices: " << out_graph.num_vertices << "\n";
       out_graph.adjacent_offset = new idx_t[out_graph.num_vertices + 1];
     }
