@@ -127,8 +127,8 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
     vc_recv_msg[s] = new VertexColorMessage[num_procs * superstep_s];
 
   auto reqs = new MPI_Request[ns];
-  auto stats = new MPI_Status[ns];
-  while (ns) {
+  bool any_color = true;
+  while (ns && any_color) {
     std::cerr << "Proc " << rank <<
         ": num of boundary vertices to be colored: " << nc << "\n";
     auto beg_it = std::begin(not_colored);
@@ -144,7 +144,8 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
                      2 * superstep_s, MPI_INT, MPI_COMM_WORLD, reqs + s);
     }
 
-    MPI_Waitall(ns, reqs, stats);
+    MPI_Waitall(ns, reqs, MPI_STATUS_IGNORE);
+    any_color = false;
     for (int s = 0; s < ns; ++s) {
       for (int p = 0; p < num_procs; ++p) {
         // No need to process ranks colors
@@ -156,6 +157,7 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
           if (rm.vertex == -1)
             break;
 
+          any_color = true;
           color[rm.vertex] = rm.color;
           max_color = std::max(max_color, color[rm.vertex]);
         }
@@ -175,8 +177,8 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
     }
 
     nc = not_colored.size();
-    MPI_Allgather(&nc, 1, MPI_INT, nc_sizes, 1, MPI_INT, MPI_COMM_WORLD);
-    ns = num_superstep(nc_sizes, num_procs, superstep_s);
+    if (nc)
+      any_color = true;
   }
 
   delete[] nc_sizes;
@@ -186,7 +188,6 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
 
   delete[] vc_recv_msg;
   delete[] reqs;
-  delete[] stats;
   return max_color;
 }
 
