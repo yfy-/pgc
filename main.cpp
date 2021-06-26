@@ -325,15 +325,26 @@ int main(int argc, char* argv[]) {
   if (argc == 3)
     superstep_size = std::stoul(argv[2]);
 
-  double start = MPI_Wtime();
-  std::uint32_t colors = spcr_framework(graph, partitioning, internal,
-                                        boundary, superstep_size, rank,
-                                        num_procs);
-  std::cerr << "Proc " << rank << ": SPCRFramework took " <<
-      (MPI_Wtime() - start) * 1000.0 << "ms\n";
+  std::vector<double> times(10);
+  std::uint32_t colors = 0;
+  for (int i = 0; i < 10; ++i) {
+    VertexList boundary_cp = boundary;
+    MPI_Barrier(MPI_COMM_WORLD);
+    double start = MPI_Wtime();
+        colors = spcr_framework(graph, partitioning, internal, boundary_cp,
+                                superstep_size, rank, num_procs);
+    MPI_Barrier(MPI_COMM_WORLD);
+    double end = MPI_Wtime();
+    times[i] = end - start;
+  }
+
+  if (rank == 0) {
+    double min_time = *std::min_element(std::begin(times), std::end(times));
+    std::cerr << "SPCRFramework took " << min_time * 1000.0 << "ms\n";
+    std::cerr << "Used " << colors + 1 << " colors\n";
+  }
+
   delete[] partitioning;
-  std::cerr << "Used " << colors + 1 << " colors\n";
   MPI_Finalize();
-  std::cerr << "Proc " << rank << " exiting with " << error << "\n";
   return error;
 }
