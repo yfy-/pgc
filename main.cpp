@@ -89,8 +89,7 @@ std::size_t num_superstep(std::uint32_t* all_nc_sizes, int num_procs,
 }
 
 std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
-                             const VertexList& internal,
-                             const VertexList& boundary,
+                             const VertexList& internal, VertexList& boundary,
                              std::uint32_t superstep_s, int rank,
                              int num_procs) {
   ColorMap color;
@@ -114,9 +113,9 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
     }
   }
 
-  VertexList not_colored = boundary;
+  // VertexList not_colored = std::move(boundary);
   auto nc_sizes = new std::uint32_t[num_procs];
-  std::uint32_t nc = not_colored.size();
+  std::uint32_t nc = boundary.size();
   MPI_Allgather(&nc, 1, MPI_UINT32_T, nc_sizes, 1, MPI_UINT32_T,
                 MPI_COMM_WORLD);
   std::uint32_t ns = num_superstep(nc_sizes, num_procs, superstep_s);
@@ -129,7 +128,7 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
   while (ns) {
     // std::cerr << "Proc " << rank <<
     //     ": num of boundary vertices to be colored: " << nc << "\n";
-    auto beg_it = std::begin(not_colored);
+    auto beg_it = std::begin(boundary);
     for (int s = 0; s < ns; ++s) {
       memset(vc_send_msg, -1, sizeof(*vc_send_msg) * superstep_s);
       std::uint32_t beg = s * superstep_s;
@@ -160,20 +159,20 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
       }
     }
 
-    std::vector<std::uint32_t> recolor;
-    for (auto u: not_colored) {
+    int new_nc = 0;
+    for (int i = 0; i < nc; ++i) {
+      std::uint32_t u = boundary[i];
       idx_t const * u_adj = graph.adj(u);
-      for (int i = 0; i < graph.degree(u); ++i) {
-        std::uint32_t v = u_adj[i];
+      for (int j = 0; j < graph.degree(u); ++j) {
+        std::uint32_t v = u_adj[j];
         if (color[u] == color.at(v) && random.at(v) > random[u]) {
-          recolor.push_back(u);
+          boundary[new_nc++] = u;
           break;
         }
       }
     }
 
-    not_colored = recolor;
-    nc = not_colored.size();
+    nc = new_nc;
     MPI_Allgather(&nc, 1, MPI_UINT32_T, nc_sizes, 1, MPI_UINT32_T,
                   MPI_COMM_WORLD);
     ns = num_superstep(nc_sizes, num_procs, superstep_s);
