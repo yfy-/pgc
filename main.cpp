@@ -285,8 +285,8 @@ int main(int argc, char* argv[]) {
     return err;
   }
 
-  if (argc != 2) {
-    std::cerr << "Usage: " << argv[0] << "<graph_file>\n";
+  if (argc < 2) {
+    std::cerr << "Usage: " << argv[0] << "<graph_file> [superstep_size]\n";
     return 1;
   }
 
@@ -323,9 +323,13 @@ int main(int argc, char* argv[]) {
       internal.size() << "\n";
   std::cerr << "Proc " << rank <<
       ": boundary vertices size: " << boundary.size() << "\n";
+  std::uint32_t superstep_size = 100;
+  if (argc == 3)
+    superstep_size = std::stoul(argv[2]);
+
   double start = MPI_Wtime();
   std::uint32_t colors = spcr_framework(graph, partitioning, internal,
-                                        boundary, 100, rank, num_procs);
+                                        boundary, superstep_size, rank, num_procs);
   std::cerr << "Proc " << rank << ": SPCRFramework took " <<
       (MPI_Wtime() - start) * 1000.0 << "ms\n";
   delete[] partitioning;
