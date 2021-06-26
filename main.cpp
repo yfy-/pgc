@@ -143,7 +143,6 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
     }
 
     MPI_Waitall(ns, reqs, MPI_STATUS_IGNORE);
-    memset(nc_sizes, 0, sizeof(*nc_sizes) * num_procs);
     for (int s = 0; s < ns; ++s) {
       for (int p = 0; p < num_procs; ++p) {
         // No need to process ranks colors
@@ -161,18 +160,19 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
       }
     }
 
-    not_colored.clear();
-    for (auto u: boundary) {
+    std::vector<std::uint32_t> recolor;
+    for (auto u: not_colored) {
       idx_t const * u_adj = graph.adj(u);
       for (int i = 0; i < graph.degree(u); ++i) {
         std::uint32_t v = u_adj[i];
         if (color[u] == color.at(v) && random.at(v) > random[u]) {
-          not_colored.push_back(u);
+          recolor.push_back(u);
           break;
         }
       }
     }
 
+    not_colored = recolor;
     nc = not_colored.size();
     MPI_Allgather(&nc, 1, MPI_UINT32_T, nc_sizes, 1, MPI_UINT32_T,
                   MPI_COMM_WORLD);
