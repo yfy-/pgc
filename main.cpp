@@ -248,13 +248,12 @@ int read_csr(std::string graph_path, CSRGraph& out_graph) {
     if (tokens[0] == "a") {
       std::uint32_t u = std::stoul(tokens[1]) - 1;
       std::uint32_t v = std::stoul(tokens[2]) - 1;
-      bool ins_suc;
-      std::tie(std::ignore, ins_suc) = graph[u].insert(v);
-      if (ins_suc)
+      auto ins_res = graph[u].insert(v);
+      if (ins_res.second)
         ++out_graph.num_edges;
 
-      std::tie(std::ignore, ins_suc) = graph[v].insert(u);
-      if (ins_suc)
+      ins_res = graph[v].insert(u);
+      if (ins_res.second)
         ++out_graph.num_edges;
     } else if (tokens[0] == "p" && tokens[1] == "sp") {
       out_graph.num_vertices = std::stoul(tokens[2]);
