@@ -48,18 +48,17 @@ void ff_color(VertexList::const_iterator begin, VertexList::const_iterator end,
               std::uint32_t& max_color, VertexColorMessage* msg = nullptr) {
   int colored = 0;
   for (auto u = begin; u != end; ++u) {
-    std::unordered_set<std::uint32_t> forbidden;
+    std::vector<bool> used_colors(max_color + 1);
     idx_t const * u_adj = graph.adj(*u);
     for (int i = 0; i < graph.degree(*u); ++i) {
       auto found = color.find(u_adj[i]);
       if (found != std::end(color))
-        forbidden.insert(found->second);
+        used_colors[found->second] = true;
     }
 
     std::uint32_t ff = 0;
-    while (true) {
-      auto found = forbidden.find(ff);
-      if (found == std::end(forbidden))
+    for (auto uc: used_colors) {
+      if (!uc)
         break;
 
       ++ff;
@@ -74,18 +73,9 @@ void ff_color(VertexList::const_iterator begin, VertexList::const_iterator end,
   }
 }
 
-std::size_t num_superstep(std::uint32_t* all_nc_sizes, int num_procs,
-                          std::uint32_t superstep_s) {
-  std::size_t max_num = 0;
-  for (int i = 0; i < num_procs; ++i) {
-    std::size_t cs = all_nc_sizes[i] / superstep_s;
-    if (all_nc_sizes[i] % superstep_s != 0)
-      cs++;
-
-    max_num = std::max(max_num, cs);
-  }
-
-  return max_num;
+std::size_t num_superstep(std::uint32_t nc, std::uint32_t superstep_s) {
+    std::size_t cs = nc / superstep_s;
+    return nc % superstep_s != 0 ? cs + 1 : cs;
 }
 
 std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
@@ -113,23 +103,22 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
     }
   }
 
-  // VertexList not_colored = std::move(boundary);
-  auto nc_sizes = new std::uint32_t[num_procs];
   std::uint32_t nc = boundary.size();
-  MPI_Allgather(&nc, 1, MPI_UINT32_T, nc_sizes, 1, MPI_UINT32_T,
-                MPI_COMM_WORLD);
-  std::uint32_t ns = num_superstep(nc_sizes, num_procs, superstep_s);
+  std::uint32_t ns = num_superstep(nc, superstep_s);
+  std::uint32_t max_ns = 0;
+  MPI_Allreduce(&ns, &max_ns, 1, MPI_UINT32_T, MPI_MAX, MPI_COMM_WORLD);
   auto vc_send_msg = new VertexColorMessage[superstep_s];
-  auto vc_recv_msg = new VertexColorMessage*[ns];
-  for (int s = 0; s < ns; ++s)
+  auto vc_recv_msg = new VertexColorMessage*[max_ns];
+  for (int s = 0; s < max_ns; ++s)
     vc_recv_msg[s] = new VertexColorMessage[num_procs * superstep_s];
 
-  auto reqs = new MPI_Request[ns];
-  while (ns) {
-    // std::cerr << "Proc " << rank <<
-    //     ": num of boundary vertices to be colored: " << nc << "\n";
+  auto reqs = new MPI_Request[max_ns];
+  while (max_ns) {
+    // // std::cerr << "Proc " << rank <<
+    // //     ": num of boundary vertices to be colored: " << nc << "\n";
+    // std::cerr << "Number of supersteps: " << ns << "\n";
     auto beg_it = std::begin(boundary);
-    for (int s = 0; s < ns; ++s) {
+    for (int s = 0; s < max_ns; ++s) {
       memset(vc_send_msg, -1, sizeof(*vc_send_msg) * superstep_s);
       std::uint32_t beg = s * superstep_s;
       std::uint32_t end = std::min(beg + superstep_s, nc);
@@ -141,8 +130,8 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
                      2 * superstep_s, MPI_INT, MPI_COMM_WORLD, reqs + s);
     }
 
-    MPI_Waitall(ns, reqs, MPI_STATUS_IGNORE);
-    for (int s = 0; s < ns; ++s) {
+    MPI_Waitall(max_ns, reqs, MPI_STATUS_IGNORE);
+    for (int s = 0; s < max_ns; ++s) {
       for (int p = 0; p < num_procs; ++p) {
         // No need to process ranks colors
         if (p == rank)
@@ -173,14 +162,12 @@ std::uint32_t spcr_framework(const CSRGraph& graph, idx_t* partitioning,
     }
 
     nc = new_nc;
-    MPI_Allgather(&nc, 1, MPI_UINT32_T, nc_sizes, 1, MPI_UINT32_T,
-                  MPI_COMM_WORLD);
-    ns = num_superstep(nc_sizes, num_procs, superstep_s);
+    ns = num_superstep(nc, superstep_s);
+    MPI_Allreduce(&ns, &max_ns, 1, MPI_UINT32_T, MPI_MAX, MPI_COMM_WORLD);
   }
 
-  delete[] nc_sizes;
   delete[] vc_send_msg;
-  for (int s = 0; s < ns; ++s)
+  for (int s = 0; s < max_ns; ++s)
     delete[] vc_recv_msg[s];
 
   delete[] vc_recv_msg;
